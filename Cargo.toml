@@ -135,8 +135,12 @@ opt-level = 1
 debug = "line-tables-only"
 
 [profile.release]
-lto = "thin"
+opt-level = 3
+lto = "fat"
 codegen-units = 1
+debug = false
+strip = "debuginfo"
+incremental = false
 
 [patch.crates-io]
 hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "2eca9b3a53a98ac52efed2a27353c6a6927ead10" }

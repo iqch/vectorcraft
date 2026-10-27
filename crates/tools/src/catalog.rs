@@ -31,6 +31,8 @@ pub const TOOL_GROUPS: &[&[ToolInfo]] = &[
         t("deleteAnchor", "Delete Anchor Point Tool", Some("-"), "tool-pen-delete"),
         t("anchorPoint", "Anchor Point Tool", Some("Shift+C"), "tool-anchor"),
     ],
+    &[t("nurbsCreate", "Create NURBS Tool", None, "tool-curvature")],
+    &[t("nurbs", "Edit NURBS Tool", None, "tool-direct")],
     &[t("curvature", "Curvature Tool", Some("Shift+~"), "tool-curvature")],
     &[
         t("type", "Type Tool", Some("T"), "tool-type"),

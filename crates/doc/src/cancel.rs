@@ -78,6 +78,10 @@ pub fn scope<T>(token: &CancelToken, sink: Option<ProgressSink>, f: impl FnOnce(
 }
 
 /// Has the work running on this thread been cancelled? Always false outside a [`scope`].
+pub(crate) fn current_token() -> Option<CancelToken> {
+    CURRENT.with(|c| c.borrow().as_ref().map(|s| s.token.clone()))
+}
+
 pub fn is_cancelled() -> bool {
     CURRENT.with(|c| c.borrow().as_ref().is_some_and(|s| s.token.is_cancelled()))
 }

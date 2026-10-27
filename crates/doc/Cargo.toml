@@ -22,6 +22,9 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1.12"
+
 [dev-dependencies]
 jpeg-encoder = { workspace = true }
 proptest = { workspace = true }

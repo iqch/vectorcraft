@@ -326,6 +326,9 @@ fn type_text(app: &mut VectorcraftApp, ctx: &egui::Context) {
 }
 
 pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
+    if crate::panels::nurbs::cancel_range(app, ctx) {
+        return;
+    }
     // Taken before anything returns, so a press in a field or a dialog ends a pair of Escapes.
     let mut escape_pair = escape_press(ctx);
     // Followed before anything returns, so a key typed in a field isn't taken for a paste.
@@ -606,6 +609,42 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
             return;
         }
     }
+    // Claimed letters are tool keys before command/tool shortcuts. Consume their
+    // associated text too, including non-Latin layout text and held-key repeats.
+    if !(m.command || m.ctrl || m.alt) {
+        let mut letters = vec![];
+        let mut claimed_text = false;
+        ctx.input_mut(|i| {
+            i.events.retain(|e| match e {
+                egui::Event::Key { key, pressed: true, repeat, modifiers, .. } => {
+                    claimed_text = false;
+                    if !(modifiers.command || modifiers.ctrl || modifiers.alt) {
+                        if let Some(c) = letter_of(*key) {
+                            let tk = ToolKey::Letter(c);
+                            if app.session.tool_claims_key(tk, view) {
+                                claimed_text = true;
+                                if !repeat {
+                                    letters.push((tk, *modifiers));
+                                }
+                                return false;
+                            }
+                        }
+                    }
+                    true
+                }
+                egui::Event::Key { .. } => {
+                    claimed_text = false;
+                    true
+                }
+                egui::Event::Text(_) => !claimed_text,
+                _ => true,
+            })
+        });
+        for (key, mods) in letters {
+            let r = app.session.tool_key(key, crate::canvas::mods(mods, false), view);
+            crate::canvas::apply_requests(app, r);
+        }
+    }
     // Command shortcuts.
     let mut fire = None;
     for (sc, id, p) in all_shortcuts() {
@@ -683,6 +722,28 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
     for (text, m) in events {
         if m.command || m.alt || m.ctrl {
             continue;
+        }
+        // Claimed letters belong to the current tool before single-key commands or
+        // tool switching (NURBS C: periodic, K: corner). `latin` above also maps
+        // non-Latin layouts using the physical key, as it does for tool shortcuts.
+        let mut chars = text.chars();
+        if let (Some(c), None) = (chars.next(), chars.next()) {
+            let c = c.to_ascii_lowercase();
+            let tk = ToolKey::Letter(c);
+            if c.is_ascii_alphabetic() && app.session.tool_claims_key(tk, view) {
+                let repeat = ctx.input(|i| {
+                    i.events.iter().any(|e| {
+                        matches!(e,
+                            egui::Event::Key { key, pressed: true, repeat: true, .. } if letter_of(*key) == Some(c)
+                        )
+                    })
+                });
+                if !repeat {
+                    let r = app.session.tool_key(tk, crate::canvas::mods(m, false), view);
+                    crate::canvas::apply_requests(app, r);
+                }
+                continue;
+            }
         }
         let upper = text.to_uppercase();
         let key = if m.shift && text.chars().all(|c| c.is_alphabetic()) { format!("Shift+{upper}") } else { upper.clone() };
@@ -1822,6 +1883,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn nurbs_c_takes_priority_over_cut_tool() {
+        use vectorcraft_doc::{LiveShape, NodeId, NodeKind};
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 500, "height": 500})).unwrap();
+        let v = app
+            .session
+            .execute(
+                "nurbs.create",
+                &json!({"controls": [
+                    {"x":20,"y":80}, {"x":100,"y":200}, {"x":220,"y":30}, {"x":300,"y":180}
+                ]}),
+            )
+            .unwrap();
+        let id = NodeId(v["id"].as_u64().unwrap());
+        app.select_tool("nurbs");
+        let periodic = |app: &VectorcraftApp| {
+            let NodeKind::Path { live: Some(live), .. } = &app.session.doc().unwrap().doc.node(id).unwrap().kind else { panic!("path") };
+            let LiveShape::Nurbs { curve, .. } = &**live else { panic!("NURBS") };
+            curve.is_periodic()
+        };
+        let ctx = egui::Context::default();
+        let frame = |app: &mut VectorcraftApp, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+                handle(app, ui.ctx());
+                app.logic(ui.ctx());
+            });
+            out.textures_delta.clear();
+        };
+        let press = |repeat| egui::Event::Key { key: Key::C, physical_key: Some(Key::C), pressed: true, repeat, modifiers: Modifiers::NONE };
+        frame(&mut app, vec![press(false), egui::Event::Text("c".into())]);
+        assert_eq!(app.session.tool_id(), "nurbs");
+        assert!(periodic(&app));
+        frame(&mut app, vec![press(true), egui::Event::Text("c".into())]);
+        assert!(periodic(&app), "holding C must not toggle repeatedly");
+        frame(
+            &mut app,
+            vec![egui::Event::Key { key: Key::C, physical_key: Some(Key::C), pressed: false, repeat: false, modifiers: Modifiers::NONE }],
+        );
+        frame(&mut app, vec![press(false), egui::Event::Text("с".into())]);
+        assert_eq!(app.session.tool_id(), "nurbs");
+        assert!(!periodic(&app), "Russian layout uses physical C");
+        frame(&mut app, vec![egui::Event::Text("v".into())]);
+        assert_eq!(app.session.tool_id(), "selection", "unclaimed letters still switch tools");
+    }
     #[test]
     fn parses() {
         let s = parse("Cmd+Shift+]").unwrap();

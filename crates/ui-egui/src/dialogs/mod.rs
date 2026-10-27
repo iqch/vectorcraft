@@ -61,6 +61,7 @@ pub mod new_brush;
 pub mod new_color_group;
 mod new_document;
 pub mod new_swatch;
+mod nurbs_vertex_color;
 pub mod office_export;
 pub mod package;
 pub(crate) mod path_ops;
@@ -275,6 +276,7 @@ registry! {
     GraphMarker: [graph_design::MARKER] => graph_design::MARKER_SPEC,
     GradientStop: ["gradientStop"] => gradient_stop::SPEC,
     ColorPicker: [color_picker::KIND] => color_picker::SPEC,
+    NurbsVertexColor: [nurbs_vertex_color::KIND] => nurbs_vertex_color::SPEC,
     GraphicStyleOptions: [graphic_style_options::KIND] => graphic_style_options::SPEC,
     EffectExists: [effect::EXISTS] => effect::EXISTS_SPEC,
     ColorGuideOptions: [color_guide_options::KIND] => color_guide_options::SPEC,

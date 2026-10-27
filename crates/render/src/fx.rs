@@ -1062,6 +1062,11 @@ pub(crate) struct DocInputs {
 }
 
 impl DocInputs {
+    /// Live raster warps also read the image pixels while expanding geometry.
+    pub(crate) fn same_live_art(&self, other: &DocInputs) -> bool {
+        self.same_art(other) && self.images == other.images
+    }
+
     /// Whether `self` and `other` were made from the same patterns and symbols: their names,
     /// tilings and art.
     pub(crate) fn same_art(&self, other: &DocInputs) -> bool {

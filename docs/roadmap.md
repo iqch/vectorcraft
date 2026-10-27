@@ -284,3 +284,45 @@ separate. Scores and hours unchanged. [Behavior and command details](development
 | 2026-10-22 | minor | Merge current main and complete the Turkish tab-drag labels and validation messages requested by the maintainer; all 24 catalogs covered; scores and estimates unchanged. |
 | 2026-10-22 | minor | Tab-drag follow-up: reconcile upstream progress updates and document drag lifecycle, insertion behavior and regression contracts; behavior, scores and estimates unchanged. |
 | 2026-10-22 | minor | Artwork dragged with Selection switches visible document tabs after a 400 ms hover, then copies editable artwork on canvas release; source and clipboard stay intact; scores and hours unchanged |
+
+### Custom branch milestones — status 2026-10-24
+
+| Task | Status | Remaining |
+|---|---|---|
+| N1: NURBS geometry | Implemented; full CI pending | Complete validation; see [NURBS extension](nurbs.md) |
+| N2: NURBS document and commands | Targeted build and 10 NURBS tests passed, 2026-10-25 | Desktop/UI validation and full CI |
+| N3: NURBS editing tool | Desktop build, 14 tests and initial UI creation verified, 2026-10-25 | Further gesture/UI validation; corner editing and split interaction |
+
+Revision history: 2026-10-24 — add custom NURBS milestones; upstream parity estimates unchanged.
+
+| Task | Status (2026-10-25) | Remaining |
+|---|---|---|
+| N4: NURBS corners and periodic contours | Implemented; 89 geometry tests passed via Rust/LLVM | Engine integration tests, desktop build and visual verification |
+
+Revision history: 2026-10-25 — N4 shared clamped corners and periodic spline source,
+backward-compatible loading and seam/refinement regressions; upstream scores unchanged.
+
+N4 validation update, 2026-10-25: all 25 targeted NURBS Cargo tests passed (6 engine,
+17 geometry, 2 tools) and the native desktop build succeeded. Remaining: manual visual
+verification of corners/periodicity and full workspace CI.
+
+| Task | Status (2026-10-25) | Remaining |
+|---|---|---|
+| N5: pasted NURBS, stage one | 96 geometry tests, final 35 targeted Cargo tests, desktop build and live API/render/save smoke checks passed | UI in stage two; full workspace CI |
+
+See [Pasted NURBS API](nurbs-pasted-api.md). Custom-branch extension; upstream parity estimates unchanged.
+
+| Task | Status (2026-10-25) | Remaining |
+|---|---|---|
+| N6: pasted NURBS panel and canvas selection | Implemented; 97 geometry tests, 43 targeted Cargo tests, desktop build and native UI/save/reopen checks passed | Full workspace CI |
+
+See [NURBS UI](nurbs-ui.md). Includes inherited names, 0..2 periodic strip, duplicate and activity flags.
+
+| Task | Status (2026-10-25) | Remaining |
+|---|---|---|
+| N7: colored NURBS stroke | N7.2 verified build; N7.3 alpha/folding and N7.4 color grid/marker/picker source prepared | New check/tests/build/native verification pending; export/advanced strokes incomplete |
+
+See [Colored NURBS implementation status](nurbs-color.md). Evidence updated 2026-10-26: selected tests and desktop build passed; full workspace CI is pending.
+### 2026-10-26 N7.5 source update
+
+Separate `nurbsCreate` (create) and `nurbs` (edit) tools, Enter/Escape handoff, stronger RGB control bands with contrast halos, and a page-background swatch before the status-bar Zoom control. N7.3/N7.4 check/59-tests/build and 12 native UI checks passed in `isolated-build_20261026_0331_fd065d82`; restoration completed, no blocked events recorded. N7.5 formatting and script syntax/plan pass; its build/native verification remains pending. No parity-score change. See `docs/nurbs-ui.md`.

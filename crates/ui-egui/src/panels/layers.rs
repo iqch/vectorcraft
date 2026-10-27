@@ -221,7 +221,14 @@ fn painted_name(n: &Node, name: &str, lang: crate::i18n::Lang) -> String {
 pub(crate) fn shown_name(app: &VectorcraftApp, n: &Node, lang: crate::i18n::Lang) -> String {
     let xml_id = app.session.prefs.identify_objects_by == "xmlId";
     let label = n.identify_label(xml_id);
-    if xml_id { label } else { painted_name(n, &label, lang) }
+    let text = if xml_id { label } else { painted_name(n, &label, lang) };
+    if n.extras().nurbs_debris.as_deref().is_some_and(|d| d.error.is_some())
+        || n.extras().nurbs_region.as_deref().is_some_and(|r| app.session.active().is_some_and(|s| r.problem(&s.doc).is_some()))
+    {
+        format!("⚠ {text}")
+    } else {
+        text
+    }
 }
 
 /// Whether `n` gets rows for what it holds (a compound path's paths are one object).
@@ -1069,7 +1076,24 @@ fn row(ui: &mut Ui, view: &View, item: &Row, out: &mut Out) {
             } else {
                 painted_name(n, &n.display_name(), crate::i18n::current())
             };
-            let text = painter.text(egui::pos2(x, r.center().y), egui::Align2::LEFT_CENTER, shown, font, if item.dim { t.text_dim } else { t.text });
+            let problem = n
+                .extras()
+                .nurbs_region
+                .as_deref()
+                .and_then(|region| region.problem(doc))
+                .or_else(|| n.extras().nurbs_debris.as_ref().and_then(|d| d.error.clone()));
+            let shown = if problem.is_some() { format!("⚠ {shown}") } else { shown };
+            if let Some(message) = &problem {
+                ui.interact(name_rect, ui.id().with(("nurbs-region-problem", n.id.0)), Sense::hover()).on_hover_text(message);
+            }
+            let color = if problem.is_some() {
+                ui.visuals().error_fg_color
+            } else if item.dim {
+                t.text_dim
+            } else {
+                t.text
+            };
+            let text = painter.text(egui::pos2(x, r.center().y), egui::Align2::LEFT_CENTER, shown, font, color);
             name_end = text.right();
             // A clipping path's name is underlined, a masked object's with a dashed line.
             if clip_path {

@@ -612,6 +612,8 @@ pub fn load_file(bytes: &[u8]) -> Result<NativeFile, FormatError> {
     // labels and the character styles, within the ranges `document.setup` takes (after the depth
     // limit: the walk recurses).
     doc.keep_scripts_in_range();
+    vectorcraft_doc::nurbs_region::empty_broken(&mut doc);
+    vectorcraft_doc::nurbs_debris::empty_broken(&mut doc);
     let profiles = f
         .profiles
         .into_iter()

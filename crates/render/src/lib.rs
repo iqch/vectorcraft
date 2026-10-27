@@ -17,6 +17,11 @@ mod images;
 mod ink;
 mod live;
 mod lru;
+mod nurbs_color;
+#[cfg(test)]
+mod nurbs_debris_tests;
+#[cfg(test)]
+mod nurbs_region_tests;
 mod paint;
 pub use paint::decode_failures;
 mod pattern;
@@ -513,6 +518,7 @@ pub struct Renderer {
     brushes: brush_fx::BrushCache,
     /// Evaluated blends/envelopes and tessellated meshes.
     live: live::LiveCache,
+    color_strips: nurbs_color::StripCache,
     /// Blurred, tinted drop shadow / outer glow rasters per object and effect (see `fx`).
     shadows: PtrMap<(usize, usize, Ink), fx::ShadowEntry>,
     /// Objects' content run through Photoshop-style effects, per object and content slot (see
@@ -675,6 +681,7 @@ impl Renderer {
             doc_inputs: None,
             transparency: None,
             live: live::LiveCache::default(),
+            color_strips: Default::default(),
             knockout: false,
             shape_of: 0,
             fx_arts: FrameCache::new(lru::FX_ART_BUDGET, 256),
@@ -807,6 +814,7 @@ impl Renderer {
         self.placed_arts.sweep(g);
         self.brushes.entries.sweep(g);
         self.live.sweep(g);
+        self.color_strips.sweep(g);
     }
 
     /// Draw frame `f` (`w`×`h` pixels): the background, the artboards and the page's art.
@@ -1616,6 +1624,9 @@ impl Renderer {
                 }
                 AppearanceItem::Stroke(st) => {
                     if !st.visible || st.paint.is_none() || st.width <= 0.0 {
+                        continue;
+                    }
+                    if self.draw_nurbs_color(ctx, f, n, st) {
                         continue;
                     }
                     if st.brush.is_some() && self.draw_brush(ctx, f, n, bp, st) {
@@ -2464,7 +2475,6 @@ fn stain_bits(stain: Option<(vectorcraft_color::Color, f32)>) -> [u32; 6] {
 }
 
 /// Preferred rasterizer thread count set by the app (Preferences → Performance); negative = automatic.
-static THREADS_OVERRIDE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
 /// Most dashes a dotted guide is drawn with (1.5 on, 2.5 off on screen); a longer one is solid.
 const MAX_GUIDE_DASHES: f64 = 100_000.0;
@@ -2495,28 +2505,14 @@ fn polygon_length(p: &BezPath) -> f64 {
 
 /// Override the worker-thread count used by renderers created from now on (`None` = automatic).
 pub fn set_default_threads(n: Option<u16>) {
-    THREADS_OVERRIDE.store(n.map_or(-1, i32::from), std::sync::atomic::Ordering::Relaxed);
+    vectorcraft_doc::raster_parallel::set_default_threads(n);
 }
 
 /// Rasterizer worker threads: 0 on wasm; otherwise one per core up to 8, leaving a core free. On a
 /// 10-core machine 8 workers render a 50,000-path page 1.4× faster than 4 (9 are slower again);
 /// the pixels don't depend on the count (`pixels_do_not_depend_on_the_thread_count`).
 pub fn default_threads() -> u16 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        0
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let o = THREADS_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed);
-        if o >= 0 {
-            return o.min(64) as u16;
-        }
-        if std::env::var_os("VECTORCRAFT_RENDER_THREADS").is_some() {
-            return std::env::var("VECTORCRAFT_RENDER_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-        }
-        std::thread::available_parallelism().map(|n| (n.get().saturating_sub(1)).min(8) as u16).unwrap_or(0)
-    }
+    vectorcraft_doc::raster_parallel::default_threads()
 }
 
 /// The whole text's glyph outlines as one path, and which of them each run draws.

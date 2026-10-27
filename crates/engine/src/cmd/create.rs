@@ -7,8 +7,155 @@ use vectorcraft_geom::{Affine, Anchor, AnchorKind, FillRule, PathData, Point, Re
 use super::newart::NewArt;
 use super::*;
 
+#[path = "nurbs_debris.rs"]
+mod debriscmd;
+#[path = "nurbs_paste.rs"]
+mod pastecmd;
+#[path = "nurbs_region.rs"]
+mod regioncmd;
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        cmd!(
+            "nurbs.debris.phase.fix",
+            "Fix Interpolated Debris Phase",
+            [],
+            None,
+            "{id?,phase:float} create a snapshot source for an interpolated phase; existing keys are unchanged",
+            has_doc,
+            debriscmd::phase_fix
+        ),
+        cmd!(
+            "nurbs.debris.create",
+            "Attach NURBS Debris",
+            ["Object", "NURBS"],
+            None,
+            "{base?,source?: ids (else two selected), name?, parameter?, scale=1, offset=0, display?: normal|mute|outline, hideSource=true} -> debris",
+            has_doc,
+            debriscmd::create
+        ),
+        cmd!(
+            "nurbs.debris.get",
+            "Read NURBS Debris",
+            [],
+            None,
+            "{id?} -> {id,base,phases,display,blend,scale,offset,parameter,u_range,l_range,problem}",
+            has_doc,
+            debriscmd::get
+        ),
+        cmd!(
+            "nurbs.debris.update",
+            "Edit NURBS Debris",
+            [],
+            None,
+            "{id?,base?:id|null,display?:normal|mute|outline,parameter?,u_range?:[start,end],l_range?:[start,end],scale?,offset?,blend?,mapping?:[origin,span]} -> debris",
+            has_doc,
+            debriscmd::update
+        ),
+        cmd!(
+            "nurbs.debris.phase.add",
+            "Add Debris Phase",
+            [],
+            None,
+            "{id?,source,phase:float,hideSource=true} add/replace linked phase; vertex count and topology must match",
+            has_doc,
+            debriscmd::phase_add
+        ),
+        cmd!(
+            "nurbs.debris.phase.remove",
+            "Remove Debris Phase",
+            [],
+            None,
+            "{id?,phase:float} -> debris (last phase retained)",
+            has_doc,
+            debriscmd::phase_remove
+        ),
+        cmd!(
+            "nurbs.debris.phase.move",
+            "Move or Copy Debris Phase",
+            [],
+            None,
+            "{id?,phase:float,newPhase:float,copy=false} move/copy a phase retaining source links",
+            has_doc,
+            debriscmd::phase_move
+        ),
+        cmd!(
+            "nurbs.debris.source",
+            "Edit Debris Source",
+            [],
+            None,
+            "{id?,phase?:float (omit for base),visible=true,select?} reveal/hide original source; returns source id and suggested tool",
+            has_doc,
+            debriscmd::source
+        ),
+        cmd!(
+            "nurbs.region.create",
+            "Create NURBS Region",
+            ["Object", "NURBS"],
+            None,
+            "{outer?, inner?: source ids (else two selected periodic NURBS; larger bounds is outer), profile?: {points:[[x,y],...]}, clearSourcePaint?: bool=true} -> {id,outer,inner}",
+            has_doc,
+            regioncmd::create
+        ),
+        cmd!("nurbs.region.get", "Read NURBS Region", [], None, "{id?} -> {id,outer,inner,profile,problem}", has_doc, regioncmd::get),
+        cmd!(
+            "nurbs.region.update",
+            "Edit NURBS Region",
+            [],
+            None,
+            "{id?, outer?: id|null, inner?: id|null, swap?: bool, profile?: {points:[[x,y],...]}} -> region; invalid sources produce empty art",
+            has_doc,
+            regioncmd::update
+        ),
+        cmd!(
+            "nurbs.paste",
+            "Paste NURBS Group",
+            [],
+            None,
+            "{id?: group id (else single selected group), mode?: u|p|l, scale?: number} -> {id, group, pasted, ignored}",
+            has_doc,
+            pastecmd::paste
+        ),
+        cmd!("nurbs.get", "Read NURBS", [], None, "{id} -> {id, curve, transform, pasted}", has_doc, pastecmd::get),
+        cmd!(
+            "nurbs.paste.update",
+            "Edit Pasted NURBS",
+            [],
+            None,
+            "{id, name, u_range?: [start,end], l_range?: [start,end], scale?: number, enabled?: bool} -> {id}",
+            has_doc,
+            pastecmd::update
+        ),
+        cmd!(
+            "nurbs.paste.duplicate",
+            "Duplicate Pasted NURBS",
+            [],
+            None,
+            "{id, name, newName?: string} -> {id,name,enabled:false}",
+            has_doc,
+            pastecmd::duplicate
+        ),
+        cmd!("nurbs.paste.remove", "Remove Pasted NURBS", [], None, "{id, name} -> {id}", has_doc, pastecmd::remove),
+        cmd!("nurbs.corner", "Toggle NURBS Corner", [], None, "{id, index: control index} → {id}", has_doc, nurbs_corner),
+        cmd!("nurbs.periodic", "Periodic NURBS", [], None, "{id, periodic?: bool} toggle or set periodic topology → {id}", has_doc, nurbs_periodic),
+        cmd!(
+            "nurbs.update",
+            "Edit NURBS",
+            [],
+            None,
+            "{id, curve: object, closed?: bool, color_stroke?: profile object | null} → {id}",
+            has_doc,
+            nurbs_update
+        ),
+        cmd!(
+            "nurbs.create",
+            "Create NURBS",
+            [],
+            None,
+            "{controls?: [{x,y,weight?: number,color?: [r,g,b,a] (0..1)}], corners?: [index], periodic?: bool, curve?: full NURBS model (alternative to controls/corners/periodic), closed?: bool (legacy straight closure), color_stroke?: profile object} → {id}",
+            has_doc,
+            nurbs_create
+        ),
         cmd!(
             "shape.rectangle",
             "Rectangle",
@@ -801,4 +948,389 @@ pub(crate) fn new_type_style(s: &Session, p: &Value) -> CharStyle {
         None => vectorcraft_color::Paint::solid(vectorcraft_color::Color::BLACK),
     };
     style
+}
+
+fn nurbs_create(s: &mut Session, p: &Value) -> Result<Value> {
+    use vectorcraft_geom::nurbs::{ControlPoint, MAX_CONTROLS, NurbsPath as NurbsCurve};
+    let cmd = "nurbs.create";
+    let curve: NurbsCurve = if let Some(value) = p.get("curve") {
+        if ["controls", "corners", "periodic"].iter().any(|key| p.get(key).is_some()) {
+            return Err(bad(cmd, "curve cannot be combined with controls, corners or periodic"));
+        }
+        serde_json::from_value(value.clone()).map_err(|e| bad(cmd, e.to_string()))?
+    } else {
+        let input = p.get("controls").and_then(Value::as_array).ok_or_else(|| bad(cmd, "missing controls"))?;
+        if !(2..=MAX_CONTROLS).contains(&input.len()) {
+            return Err(bad(cmd, "need 2..=4096 controls"));
+        }
+        let controls = input
+            .iter()
+            .map(|v| {
+                let x = f64_req(v, "x", cmd)?;
+                let y = f64_req(v, "y", cmd)?;
+                let weight = if v.get("weight").is_some() { f64_req(v, "weight", cmd)? } else { 1.0 };
+                let mut control = ControlPoint::new(Point::new(x, y), weight);
+                if let Some(c) = v.get("color") {
+                    control.color = serde_json::from_value(c.clone()).map_err(|e| bad(cmd, format!("invalid RGBA: {e}")))?;
+                }
+                Ok(control)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let corners = match p.get("corners") {
+            None => vec![],
+            Some(Value::Array(indices)) if indices.len() <= MAX_CONTROLS => indices
+                .iter()
+                .map(|v| v.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or_else(|| bad(cmd, "corner indices must be nonnegative integers")))
+                .collect::<Result<Vec<_>>>()?,
+            _ => return Err(bad(cmd, "corners must be a bounded array")),
+        };
+        let periodic = switch_or(p, "periodic", false, cmd)?;
+        NurbsCurve::with_topology(controls, corners, periodic).map_err(|e| bad(cmd, e.to_string()))?
+    };
+    let mut bp = curve.to_bezpath(0.05).map_err(|e| bad(cmd, e.to_string()))?;
+    if switch_or(p, "closed", false, cmd)? {
+        bp.close_path();
+    }
+    let preview = PathData::from_bezpath(&bp);
+    let color_stroke = p
+        .get("color_stroke")
+        .filter(|v| !v.is_null())
+        .map(|v| serde_json::from_value::<vectorcraft_doc::nurbs_color::ColorStroke>(v.clone()).map(Box::new).map_err(|e| bad(cmd, e.to_string())))
+        .transpose()?;
+    let label = if color_stroke.is_some() { "Colored NURBS" } else { "NURBS" };
+    let live = LiveShape::Nurbs { curve, preview: preview.clone(), xf: Affine::IDENTITY, color_stroke };
+    add_art(s, label, path_kind(preview, Some(live)), None)
+}
+
+#[cfg(test)]
+mod nurbs_tests {
+    use super::*;
+    #[test]
+    fn create_history_and_document_roundtrip() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width":800,"height":600})).unwrap();
+        let result = s.execute("nurbs.create", &json!({"controls":[{"x":10,"y":10},{"x":100,"y":150,"weight":0.5},{"x":250,"y":10}]})).unwrap();
+        let id = NodeId(result["id"].as_u64().unwrap());
+        let original = s.doc().unwrap().doc.node(id).unwrap().clone();
+        let saved = vectorcraft_format::save_file(&s.doc().unwrap().doc);
+        let reopened = vectorcraft_format::load(&saved).unwrap();
+        assert_eq!(reopened.node(id).unwrap().kind, original.kind);
+        let wire = serde_json::to_vec(&original).unwrap();
+        let restored: Node = serde_json::from_slice(&wire).unwrap();
+        assert_eq!(restored.kind, original.kind);
+        let NodeKind::Path { path, live: Some(live), .. } = &restored.kind else { panic!("path") };
+        assert!(!path.is_empty());
+        assert!(matches!(&**live,LiveShape::Nurbs {curve,..} if curve.degree()==2));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(s.doc().unwrap().doc.node(id).is_none());
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.node(id).unwrap().kind, original.kind);
+    }
+}
+
+fn nurbs_update(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "nurbs.update";
+    let id = id_param(p, "id").ok_or_else(|| bad(cmd, "missing id"))?;
+    let curve: vectorcraft_geom::nurbs::NurbsPath =
+        serde_json::from_value(p.get("curve").cloned().ok_or_else(|| bad(cmd, "missing curve"))?).map_err(|e| bad(cmd, e.to_string()))?;
+    if let Some(node) = s.doc()?.doc.node(id) {
+        if let NodeKind::Path { live: Some(live), .. } = &node.kind {
+            if let LiveShape::Nurbs { curve: old, .. } = &**live {
+                old.validate_corner_weights(&curve)
+                    .map_err(|_| bad(cmd, "corner weights are locked; remove the corner before changing its weight"))?;
+            }
+        }
+    }
+    let closed = p.get("closed").map(|_| switch_or(p, "closed", false, cmd)).transpose()?;
+    let mut bp = curve.to_bezpath(0.05).map_err(|e| bad(cmd, e.to_string()))?;
+    let new_style = p
+        .get("color_stroke")
+        .map(|v| {
+            if v.is_null() {
+                Ok(None)
+            } else {
+                serde_json::from_value::<vectorcraft_doc::nurbs_color::ColorStroke>(v.clone())
+                    .map(|s| Some(Box::new(s)))
+                    .map_err(|e| bad(cmd, e.to_string()))
+            }
+        })
+        .transpose()?;
+    s.edit("Edit NURBS", move |doc, _| {
+        let node = doc.node_mut(id).ok_or_else(|| bad(cmd, "object missing"))?;
+        let NodeKind::Path { path, live: Some(live), .. } = &mut node.kind else { return Err(bad(cmd, "select a NURBS curve")) };
+        let LiveShape::Nurbs { curve: source, preview, xf, color_stroke } = &mut **live else { return Err(bad(cmd, "select a NURBS curve")) };
+        let retain_legacy_close = preview.is_closed() && !source.is_periodic();
+        if !curve.is_periodic() && closed.unwrap_or(retain_legacy_close) {
+            bp.close_path();
+        }
+        *preview = PathData::from_bezpath(&bp);
+        *path = preview.transformed(*xf);
+        *source = curve;
+        if let Some(style) = new_style {
+            *color_stroke = style;
+        }
+        Ok(())
+    })?;
+    Ok(json!({"id":id.0}))
+}
+
+#[cfg(test)]
+mod nurbs_interaction_tests {
+    use super::*;
+    use crate::tooling::ViewInfo;
+    use vectorcraft_tools::{Mods, PointerEvent, PointerKind, ToolKey};
+    fn source(s: &Session, id: NodeId) -> vectorcraft_geom::nurbs::NurbsPath {
+        let NodeKind::Path { live: Some(live), .. } = &s.doc().unwrap().doc.node(id).unwrap().kind else { panic!("path") };
+        let LiveShape::Nurbs { curve, .. } = &**live else { panic!("NURBS") };
+        curve.clone()
+    }
+    #[test]
+    fn interactive_creation_drag_weight_cancel_and_history() {
+        let mut s = Session::new();
+        let view = ViewInfo::default();
+        s.execute("file.new", &json!({"width":500,"height":500})).unwrap();
+        s.select_tool("nurbsCreate", view).unwrap();
+        assert_eq!(s.tool_id(), "nurbsCreate");
+        for (x, y) in [(20.0, 20.0), (120.0, 180.0), (250.0, 20.0)] {
+            s.pointer(&PointerEvent::new(PointerKind::Down, x, y), view).unwrap();
+            s.pointer(&PointerEvent::new(PointerKind::Up, x, y), view).unwrap();
+        }
+        let id = *s.doc().unwrap().selection.objects.first().unwrap();
+        assert_eq!(source(&s, id).degree(), 2);
+        let requests = s.tool_key(ToolKey::Enter, Mods::default(), view).unwrap();
+        let [crate::UiRequest::SwitchTool(tool)] = requests.as_slice() else { panic!("Enter must request a tool switch, got {requests:?}") };
+        assert_eq!(tool.as_str(), "nurbs", "Enter must request the NURBS editor");
+        // The frontend fulfils SwitchTool requests; reproduce that part of its event loop.
+        s.select_tool(tool, view).unwrap();
+        assert_eq!(s.tool_id(), "nurbs", "The frontend request must switch from creation to editing");
+        let before = source(&s, id);
+        s.pointer(&PointerEvent::new(PointerKind::Down, 120.0, 180.0), view).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Drag, 160.0, 160.0), view).unwrap();
+        assert_ne!(source(&s, id), before);
+        s.tool_key(ToolKey::Escape, Mods::default(), view).unwrap();
+        assert_eq!(source(&s, id), before);
+        s.pointer(&PointerEvent::new(PointerKind::Up, 160.0, 160.0), view).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Down, 120.0, 180.0), view).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Drag, 160.0, 160.0), view).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, 160.0, 160.0), view).unwrap();
+        let moved = source(&s, id);
+        assert_eq!(moved.controls().get(1).unwrap().position, Point::new(160.0, 160.0));
+        s.tool_key(ToolKey::BracketRight, Mods::default(), view).unwrap();
+        assert!((source(&s, id).controls().get(1).unwrap().weight - 1.2).abs() < 1e-10);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(source(&s, id), moved);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(source(&s, id), before);
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(source(&s, id), moved);
+    }
+    #[test]
+    fn invalid_update_is_atomic() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width":500,"height":500})).unwrap();
+        let v = s.execute("nurbs.create", &json!({"controls":[{"x":0,"y":0},{"x":100,"y":100}]})).unwrap();
+        let id = NodeId(v["id"].as_u64().unwrap());
+        let before = source(&s, id);
+        let mut bad_curve = serde_json::to_value(&before).unwrap();
+        bad_curve["degree"] = json!(10);
+        assert!(s.execute("nurbs.update", &json!({"id":id.0,"curve":bad_curve})).is_err());
+        assert_eq!(source(&s, id), before);
+    }
+}
+
+fn nurbs_source(s: &Session, p: &Value, cmd: &str) -> Result<(NodeId, vectorcraft_geom::nurbs::NurbsPath)> {
+    let id = id_param(p, "id").ok_or_else(|| bad(cmd, "missing id"))?;
+    let state = s.doc()?;
+    let node = state.doc.node(id).ok_or_else(|| bad(cmd, "object missing"))?;
+    let NodeKind::Path { live: Some(live), .. } = &node.kind else { return Err(bad(cmd, "select a NURBS curve")) };
+    let LiveShape::Nurbs { curve, .. } = &**live else { return Err(bad(cmd, "select a NURBS curve")) };
+    Ok((id, curve.clone()))
+}
+fn nurbs_corner(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "nurbs.corner";
+    let (id, curve) = nurbs_source(s, p, cmd)?;
+    let index = p.get("index").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok()).ok_or_else(|| bad(cmd, "missing control index"))?;
+    let curve = curve.toggle_corner(index).map_err(|e| bad(cmd, e.to_string()))?;
+    nurbs_update(s, &json!({"id":id.0,"curve":curve}))
+}
+fn nurbs_periodic(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "nurbs.periodic";
+    let (id, curve) = nurbs_source(s, p, cmd)?;
+    let enabled = switch_or(p, "periodic", !curve.is_periodic(), cmd)?;
+    let curve = curve.with_periodic(enabled).map_err(|e| bad(cmd, e.to_string()))?;
+    nurbs_update(s, &json!({"id":id.0,"curve":curve,"closed":false}))
+}
+
+#[cfg(test)]
+mod nurbs_topology_tests {
+    use super::*;
+    use crate::tooling::ViewInfo;
+    use vectorcraft_geom::nurbs::NurbsPath;
+    use vectorcraft_tools::{Mods, PointerEvent, PointerKind, ToolKey};
+    fn source(s: &Session, id: NodeId) -> NurbsPath {
+        let NodeKind::Path { live: Some(live), .. } = &s.doc().unwrap().doc.node(id).unwrap().kind else { panic!("path") };
+        let LiveShape::Nurbs { curve, .. } = &**live else { panic!("NURBS") };
+        curve.clone()
+    }
+    fn session() -> (Session, NodeId) {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width":500,"height":500})).unwrap();
+        let v = s
+            .execute(
+                "nurbs.create",
+                &json!({"controls":[{"x":20,"y":80},{"x":100,"y":200},{"x":220,"y":30,"weight":1.5},{"x":300,"y":180},{"x":380,"y":80}]}),
+            )
+            .unwrap();
+        (s, NodeId(v["id"].as_u64().unwrap()))
+    }
+    #[test]
+    fn nurbs_corner_periodic_native_history_and_shared_weight() {
+        let (mut s, id) = session();
+        let before = source(&s, id);
+        s.execute("nurbs.corner", &json!({"id":id.0,"index":2})).unwrap();
+        let corner = source(&s, id);
+        assert!(corner.is_corner(2));
+        assert_eq!(corner.pieces().len(), 2);
+        let point = vectorcraft_geom::nurbs::ControlPoint::new(Point::new(240.0, 60.0), corner.controls()[2].weight);
+        let moved = corner.set_control(2, point).unwrap();
+        s.execute("nurbs.update", &json!({"id":id.0,"curve":moved})).unwrap();
+        assert_eq!(source(&s, id).pieces().first().unwrap().controls().last(), Some(&point));
+        assert_eq!(source(&s, id).pieces().last().unwrap().controls().first(), Some(&point));
+        s.execute("nurbs.periodic", &json!({"id":id.0,"periodic":true})).unwrap();
+        let closed = source(&s, id);
+        assert!(closed.is_periodic());
+        assert_eq!(closed.corners().len(), 1);
+        let saved = vectorcraft_format::save_file(&s.doc().unwrap().doc);
+        let reopened = vectorcraft_format::load(&saved).unwrap();
+        assert_eq!(reopened.node(id).unwrap().kind, s.doc().unwrap().doc.node(id).unwrap().kind);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(source(&s, id), moved);
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(source(&s, id), closed);
+        s.execute("nurbs.corner", &json!({"id":id.0,"index":2})).unwrap();
+        assert!(source(&s, id).corners().is_empty());
+        assert!(source(&s, id).is_periodic());
+        s.execute("nurbs.periodic", &json!({"id":id.0,"periodic":false})).unwrap();
+        let NodeKind::Path { path, .. } = &s.doc().unwrap().doc.node(id).unwrap().kind else { panic!("path") };
+        assert!(!path.is_closed());
+        assert!(!source(&s, id).is_periodic());
+        assert_eq!(source(&s, id).controls().len(), before.controls().len());
+    }
+    #[test]
+    fn nurbs_shift_click_and_periodic_key_preserve_editability() {
+        let (mut s, id) = session();
+        let view = ViewInfo::default();
+        s.select_tool("nurbs", view).unwrap();
+        let shifted = PointerEvent::new(PointerKind::Down, 220.0, 30.0).with_mods(Mods { shift: true, ..Default::default() });
+        s.pointer(&shifted, view).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, 220.0, 30.0), view).unwrap();
+        assert!(source(&s, id).is_corner(2));
+        s.pointer(&PointerEvent::new(PointerKind::Down, 220.0, 30.0), view).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, 220.0, 30.0), view).unwrap();
+        s.tool_key(ToolKey::Letter('k'), Mods::default(), view).unwrap();
+        assert!(source(&s, id).corners().is_empty());
+        s.tool_key(ToolKey::Letter('c'), Mods::default(), view).unwrap();
+        let original = source(&s, id);
+        assert!(original.is_periodic());
+        let point = original.evaluate(0.371).unwrap();
+        let click = PointerEvent::new(PointerKind::Down, point.x, point.y).with_mods(Mods { ctrl: true, ..Default::default() });
+        s.pointer(&click, view).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, point.x, point.y), view).unwrap();
+        let refined = source(&s, id);
+        assert!(refined.controls().len() > original.controls().len());
+        for i in 0..=100 {
+            let u = i as f64 / 100.0;
+            assert!(original.evaluate(u).unwrap().distance(refined.evaluate(u).unwrap()) < 1e-7);
+        }
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(source(&s, id), original);
+    }
+    #[test]
+    fn nurbs_topology_commands_reject_bad_indices_atomically() {
+        let (mut s, id) = session();
+        let original = source(&s, id);
+        for index in [0, 4, 1000] {
+            assert!(s.execute("nurbs.corner", &json!({"id":id.0,"index":index})).is_err());
+            assert_eq!(source(&s, id), original);
+        }
+        assert!(s.execute("nurbs.create", &json!({"controls":[{"x":0,"y":0},{"x":1,"y":1}],"corners":[100]})).is_err());
+        assert_eq!(source(&s, id), original);
+    }
+}
+
+#[cfg(test)]
+mod nurbs_color_tests {
+    use super::*;
+    #[test]
+    fn nurbs_color_create_update_native_and_history() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width":400,"height":300})).unwrap();
+        let r=s.execute("nurbs.create",&json!({"controls":[{"x":20,"y":100,"color":[1,0,0,1]},{"x":300,"y":100,"color":[0,0,1,0.5]}],"color_stroke":{"interpolation":"hsv","width":{"points":[[0,0],[0.5,2],[1,0]]},"offset_amount":30,"offset":{"points":[[0,-1],[1,1]]},"opacity":{"points":[[0,0],[1,1]]}}})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        let original = s.execute("nurbs.get", &json!({"id":id})).unwrap();
+        assert_eq!(original["color_stroke"]["interpolation"], "hsv");
+        let saved = vectorcraft_format::save_file(&s.doc().unwrap().doc);
+        let reopened = vectorcraft_format::load(&saved).unwrap();
+        assert_eq!(reopened.node(NodeId(id)).unwrap().kind, s.doc().unwrap().doc.node(NodeId(id)).unwrap().kind);
+        let mut invalid = original["color_stroke"].clone();
+        invalid["width"]["points"][0][1] = json!(3.0);
+        assert!(s.execute("nurbs.update", &json!({"id":id,"curve":original["curve"],"color_stroke":invalid})).is_err());
+        assert_eq!(s.execute("nurbs.get", &json!({"id":id})).unwrap(), original);
+        s.execute("nurbs.update", &json!({"id":id,"curve":original["curve"],"color_stroke":null})).unwrap();
+        assert!(s.execute("nurbs.get", &json!({"id":id})).unwrap()["color_stroke"].is_null());
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.execute("nurbs.get", &json!({"id":id})).unwrap(), original);
+    }
+}
+
+#[cfg(test)]
+mod nurbs_stable_corner_tests {
+    use super::*;
+    use vectorcraft_geom::nurbs::NurbsPath;
+    #[test]
+    fn nurbs_periodic_colors_corner_weights_and_native_order() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({"width":400,"height":300})).unwrap();
+        let id=s.execute("nurbs.create",&json!({"periodic":true,"controls":[{"x":20,"y":50,"color":[1,0,0,1]},{"x":170,"y":20,"color":[0,1,0,1]},{"x":300,"y":200,"color":[0,0,1,1]},{"x":80,"y":250,"color":[1,1,0,1]}],"color_stroke":{}})).unwrap()["id"].as_u64().unwrap();
+        let get = |s: &mut Session| s.execute("nurbs.get", &json!({"id":id})).unwrap();
+        let before = get(&mut s);
+        s.execute("nurbs.corner", &json!({"id":id,"index":2})).unwrap();
+        let v = get(&mut s);
+        let curve: NurbsPath = serde_json::from_value(v["curve"].clone()).unwrap();
+        assert_eq!(curve.corners(), &[2]);
+        let old: NurbsPath = serde_json::from_value(before["curve"].clone()).unwrap();
+        assert_eq!(curve.controls(), old.controls());
+        let view = crate::tooling::ViewInfo::default();
+        s.select_tool("nurbs", view).unwrap();
+        use vectorcraft_tools::{Mods, PointerEvent, PointerKind, ToolKey};
+        s.pointer(&PointerEvent::new(PointerKind::Down, 300.0, 200.0).with_mods(Mods { alt: true, ..Default::default() }), view).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Drag, 300.0, 160.0).with_mods(Mods { alt: true, ..Default::default() }), view).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, 300.0, 160.0), view).unwrap();
+        s.tool_key(ToolKey::BracketRight, Mods::default(), view).unwrap();
+        assert_eq!(get(&mut s), v, "Alt-drag and brackets must not change a corner weight");
+        let modified = NurbsPath::with_topology(
+            curve
+                .controls()
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let mut p = *p;
+                    if i == 2 {
+                        p.weight = 2.0;
+                    }
+                    p
+                })
+                .collect(),
+            vec![2],
+            true,
+        )
+        .unwrap();
+        assert!(s.execute("nurbs.update", &json!({"id":id,"curve":modified})).is_err());
+        assert_eq!(get(&mut s), v);
+        let bytes = vectorcraft_format::save_file(&s.doc().unwrap().doc);
+        let reopened = vectorcraft_format::load(&bytes).unwrap();
+        assert_eq!(reopened.node(NodeId(id)).unwrap().kind, s.doc().unwrap().doc.node(NodeId(id)).unwrap().kind);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(get(&mut s), before);
+    }
 }

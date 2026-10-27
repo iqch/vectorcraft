@@ -50,6 +50,8 @@ pub const BASIC: &[(&str, &[&[&str]])] = &[
             &["paintbrush", "blobBrush"],
             &["pen", "addAnchor", "deleteAnchor", "anchorPoint"],
             &["curvature"],
+            &["nurbsCreate"],
+            &["nurbs"],
         ],
     ),
     (
@@ -67,6 +69,13 @@ pub const BASIC: &[(&str, &[&[&str]])] = &[
 ];
 
 pub(crate) fn tip(t: &ToolInfo) -> String {
+    if t.id == "nurbsCreate" {
+        return "Create NURBS: click to add vertices; Enter: finish and edit; C: close periodically and edit; Esc: finish and edit".into();
+    }
+    if t.id == "nurbs" {
+        return "Edit NURBS: click a curve to select; drag controls; Alt-drag or [ ] for weight; Ctrl-click to insert; Shift-click / K: corner; C: periodic; Window > NURBS for pasted curves; Esc to cancel"
+            .into();
+    }
     match crate::shortcut_editor::tool_shortcut(t.id) {
         Some(s) => format!("{} ({})", tl!(t.label), s),
         None => tl!(t.label).to_string(),

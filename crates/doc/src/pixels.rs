@@ -133,7 +133,7 @@ impl ImageBlob {
     }
 
     /// The decoded pixels (the last image decoded is kept for the next sample).
-    fn decoded(&self) -> Option<Arc<image::RgbaImage>> {
+    pub(crate) fn decoded(&self) -> Option<Arc<image::RgbaImage>> {
         thread_local! {
             static LAST: std::cell::RefCell<Option<(String, Arc<image::RgbaImage>)>> = const { std::cell::RefCell::new(None) };
         }

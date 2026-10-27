@@ -23,6 +23,7 @@ pub mod intertwine;
 pub mod meshblend;
 pub mod meshedit;
 pub mod mirror;
+pub mod nurbs;
 pub mod objects_on_path;
 pub mod params;
 pub mod pathtype;
@@ -869,6 +870,8 @@ pub fn create(id: &str) -> Box<dyn Tool> {
         "directSelection" => Box::new(direct::DirectSelectionTool::new(false)),
         "groupSelection" => Box::new(direct::DirectSelectionTool::new(true)),
         "pen" => Box::new(pen::PenTool::default()),
+        "nurbs" => Box::new(nurbs::NurbsTool::default()),
+        "nurbsCreate" => Box::new(nurbs::NurbsTool::create()),
         "dimension" => Box::new(dimension::DimensionTool::default()),
         "type" | "areaType" | "typeOnPath" | "verticalType" | "verticalAreaType" | "verticalTypeOnPath" => Box::new(text::TypeTool::new(id)),
         "rectangle" | "roundedRectangle" | "ellipse" | "polygon" | "star" | "lineSegment" => Box::new(shape::ShapeTool::new(id)),

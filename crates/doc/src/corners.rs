@@ -38,14 +38,14 @@ pub fn convert_radii_relative(live: &mut LiveShape, relative: bool) {
         LiveShape::Rectangle { w, h, .. } => shapes::rectangle(Rect::new(0.0, 0.0, *w, *h)),
         LiveShape::Polygon { .. } => live.polygon_outline(),
         LiveShape::Path { base, .. } => base.clone(),
-        LiveShape::Ellipse { .. } | LiveShape::Line { .. } => return,
+        LiveShape::Nurbs { .. } | LiveShape::Ellipse { .. } | LiveShape::Line { .. } => return,
     };
     let corners = path_corners(&base);
     let radii: &mut [f64] = match live {
         LiveShape::Rectangle { radii, .. } => radii,
         LiveShape::Polygon { radii, .. } => radii,
         LiveShape::Path { radii, .. } => radii,
-        LiveShape::Ellipse { .. } | LiveShape::Line { .. } => return,
+        LiveShape::Nurbs { .. } | LiveShape::Ellipse { .. } | LiveShape::Line { .. } => return,
     };
     for c in corners {
         if let Some(r) = radii.get(c.index) {
@@ -65,7 +65,7 @@ pub fn convert_radii_relative(live: &mut LiveShape, relative: bool) {
         | LiveShape::Path { radii_relative: rel, .. } => {
             *rel = relative;
         }
-        LiveShape::Ellipse { .. } | LiveShape::Line { .. } => {}
+        LiveShape::Nurbs { .. } | LiveShape::Ellipse { .. } | LiveShape::Line { .. } => {}
     }
 }
 
@@ -105,7 +105,7 @@ impl<'a> LiveCorners<'a> {
             Some(LiveShape::Path { base, radii, kinds, radii_relative }) => {
                 (Cow::Borrowed(base), Affine::IDENTITY, radii.clone(), kinds.clone(), *radii_relative)
             }
-            Some(LiveShape::Ellipse { .. } | LiveShape::Line { .. }) => return None,
+            Some(LiveShape::Nurbs { .. } | LiveShape::Ellipse { .. } | LiveShape::Line { .. }) => return None,
         };
         let radii = resolve_stored_radii(&base, &stored, relative);
         let sources = if radii.iter().any(|r| *r > 0.0) {
@@ -265,7 +265,7 @@ pub fn set_corners(path: &mut PathData, live: &mut Option<Box<LiveShape>>, corne
             edit(base, relative, radii, kinds, corners, radius, kind);
             trim_vec_radii(radii, kinds);
         }
-        LiveShape::Ellipse { .. } | LiveShape::Line { .. } => return,
+        LiveShape::Nurbs { .. } | LiveShape::Ellipse { .. } | LiveShape::Line { .. } => return,
     }
     match live.as_deref_mut() {
         Some(LiveShape::Path { base, radii, kinds, .. }) if radii.is_empty() && kinds.is_empty() => {

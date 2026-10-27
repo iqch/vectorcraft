@@ -38,6 +38,7 @@ id = "ArrowHollow"
 group = "Selection"
 shown_when = [
     "Direct Selection at rest: away from anchors and curved segments, and over handles and fills.",
+    "Edit NURBS: select curves and move control vertices without creating new paths.",
     "The pen-family tools with Cmd/Ctrl held (which lends Direct Selection).",
     "While a Selection or Direct Selection drag snaps to a point or a guide (the solid arrow turns hollow).",
 ]

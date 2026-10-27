@@ -697,6 +697,7 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(8, 0)).stroke(Stroke::new(1.0, t.border)))
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
+                page_color_button(app, ui);
                 let zoom = app.view().map(|v| v.zoom).unwrap_or(1.0);
                 let print = app.session.prefs.display_print_size;
                 let shown = crate::state::zoom_display_percent(zoom, print);
@@ -768,6 +769,22 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 status_readouts(app, ui, &t);
             });
         });
+}
+
+/// The active artboard's existing paper-color dialog, available without selecting a curve.
+fn page_color_button(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let count = app.session.active().map_or(0, |s| s.doc.artboards.len());
+    let index = crate::panels::artboards::selected(app, count);
+    let color = app.session.active().and_then(|s| s.doc.artboards.get(index)).and_then(|a| a.color);
+    let fill = color.as_ref().map_or(egui::Color32::WHITE, crate::panels::c32);
+    let response =
+        ui.add_enabled(count > 0, egui::Button::new("").fill(fill).min_size(vec2(20.0, 18.0))).on_hover_text("Page background color (view only)");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, count > 0, "Page background color"));
+    if response.clicked() {
+        if let Err(e) = app.run("ui.colorPicker", json!({"artboard":index})) {
+            app.status(e);
+        }
+    }
 }
 
 /// The most recently measured status widths, scoped to this UI and display settings.

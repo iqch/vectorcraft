@@ -491,6 +491,25 @@ fn hit_order<'a>(parent: &Node, children: &'a [std::sync::Arc<Node>], p: Point) 
 /// paints there (arrowheads, alignment, width profile, projecting caps, miter spikes), else its
 /// outline within the tolerance. Outline mode hits the outline only.
 fn hit_stroke(n: &Node, bp: &vectorcraft_geom::BezPath, rule: vectorcraft_geom::FillRule, p: Point, opt: HitOptions) -> Option<HitKind> {
+    if !opt.outline
+        && let NodeKind::Path { live: Some(live), .. } = &n.kind
+        && let crate::LiveShape::Nurbs { curve, xf, color_stroke: Some(style), .. } = &**live
+    {
+        for item in n.appearance.items.iter().rev() {
+            if let AppearanceItem::Stroke(st) = item
+                && st.visible
+                && !st.paint.is_none()
+                && st.width > 0.0
+            {
+                if let Ok(strip) = style.strip(curve, *xf, st, 256)
+                    && (fill_contains(&strip.outline, vectorcraft_geom::FillRule::NonZero, p) || stroke_contains(&strip.outline, 0.0, opt.tol, p))
+                {
+                    return Some(HitKind::Stroke);
+                }
+            }
+        }
+        return stroke_contains(bp, 0.0, opt.tol, p).then_some(HitKind::Outline);
+    }
     if !opt.outline && n.appearance.stroke_hit(bp, rule, p, opt.tol) {
         return Some(HitKind::Stroke);
     }

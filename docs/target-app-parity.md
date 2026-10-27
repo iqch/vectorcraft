@@ -1351,3 +1351,65 @@ applies to fills). Tests: `color::gradient::tests` (perceptual midpoint, expansi
 | 2026-10-22 | minor | Merge current main and complete the Turkish tab-drag labels and validation messages requested by the maintainer; all 24 catalogs covered; scores and estimates unchanged. |
 | 2026-10-22 | minor | Tab-drag follow-up: reconcile upstream progress updates and document drag lifecycle, insertion behavior and regression contracts; behavior, scores and estimates unchanged. |
 | 2026-10-22 | minor | Artwork dragged with Selection switches visible document tabs after a 400 ms hover, then copies editable artwork on canvas release; source and clipboard stay intact; scores and hours unchanged |
+
+### Custom branch extension — 2026-10-24
+
+N1: [NURBS geometry](nurbs.md) provides validated rational curve operations and regression
+tests. This is an internal geometry foundation; document integration and editing tools
+are pending. No shipped feature score, missing parity item or hour estimate changes.
+Revision history: 2026-10-24 — record N1 custom-branch foundation; full CI pending.
+
+NURBS custom-branch evidence, 2026-10-25: contributor-run frozen/offline targeted build
+passed 9 geometry tests and 1 engine test covering creation, native save/load and
+Undo/Redo. Desktop visual validation and full workspace CI remain pending; parity
+scores and estimates unchanged. See [NURBS extension](nurbs.md).
+
+NURBS interaction evidence, 2026-10-25: contributor-run targeted Cargo test build
+passed all 14 selected tests (3 engine, 9 geometry, 2 tools), including click creation,
+control move/weight editing, cancellation, history and native persistence. Desktop
+visual validation remains pending. Parity scores and estimates unchanged.
+
+NURBS desktop evidence, 2026-10-25: native desktop build succeeded; initial visual
+inspection confirmed toolbar access, five-click NURBS creation, control points, control
+polygon and weight label. Further UI gesture verification was blocked by the execution
+environment; see [NURBS extension](nurbs.md). Scores and estimates unchanged.
+
+NURBS custom-branch evidence, 2026-10-25: shared clamped corners and smooth periodic
+kernels implemented; all 89 geometry tests passed in the independent Rust/LLVM run.
+Engine integration and desktop validation of this extension remain pending. No upstream
+parity score or estimate changes; details in [NURBS extension](nurbs.md).
+
+NURBS N4 evidence update, 2026-10-25: all 25 targeted Cargo tests passed, including
+engine gestures, native persistence and history; native desktop build succeeded.
+Manual corner/periodic visual verification remains pending. Scores unchanged.
+
+NURBS N5 evidence, 2026-10-25: pasted group/model API implemented; 96 geometry tests and
+35 targeted Cargo tests passed, desktop build succeeded. Live control API verified two
+pasted intervals, ignored non-NURBS art, editing, full-model creation, removal and Undo;
+rendering and native save succeeded. Stage-two UI and full workspace CI remain pending.
+Custom branch only: upstream parity scores unchanged. See [Pasted NURBS API](nurbs-pasted-api.md).
+
+NURBS N6 evidence, 2026-10-25: panel and canvas pasted selection/dragging implemented;
+source names inherited, periodic 0..2 range strip, duplicate and temporary disable added.
+All 97 geometry tests and 43 targeted Cargo tests passed; desktop build and native UI
+creation/drag/checkbox/Undo/save/reopen checks passed. See [NURBS UI](nurbs-ui.md).
+Full workspace CI pending; upstream parity scores unchanged.
+
+
+NURBS N7 draft, 2026-10-26: OS-isolated check, 48 selected tests and desktop build passed. Native isolated UI verified draft/Apply, HSV, width graph drag, Undo/Redo and native save/close/reopen; screenshots inspected. Export/advanced strokes remain incomplete; no parity score change. See [colored NURBS draft](nurbs-color.md).
+
+N7.1 follow-up, 2026-10-26: live-edit/RMS-overlap/cap-join source prepared; compilation and runtime verification pending. Earlier N7 evidence remains historical; no parity score change.
+
+N7.1 verification update, 2026-10-26 01:17: isolated check, 54 selected tests, desktop build and 12 native UI checks passed. Live HSV/width, Undo/Redo and native save/reopen verified. Caps/joins and RMS/tile regressions pass; no parity score change. See nurbs-color.md for session evidence and remaining limitations.
+
+N7.2 source update, 2026-10-26 02:17: stable periodic control/color order and serialized internal seam, locked corner weights, NURBS Stroke and page settings with existing artboard paper color, and removal of RMS overlap mixing. New compile/tests/native verification pending; prior N7.1 results do not cover these changes. No parity score change. See nurbs-color.md.
+
+N7.2 verification update, 2026-10-26 02:57: isolated check, 56 selected tests and desktop build passed. Native HSV passed; width check raced queued input. Screenshot confirms partial live width update. Script-only frame-wait fix prepared; native remainder pending. See nurbs-color.md. No parity score change.
+
+N7.3 source update, 2026-10-26 03:18: larger-parameter stroke sections composite above earlier sections with source-over alpha; object alpha applies once; periodic seam join is not doubled. Width/offset/opacity blocks now collapse independently. New checks/build/native verification pending; no parity score change. See nurbs-color.md.
+
+N7.4 source update, 2026-10-26 03:29: numbered vertex-color grid, control-color marker outlines, Alt-double-click nurbsVertexColor dialog for base/selected pasted controls, live RGBA preview and commit/cancel through nurbs.update. Compile/tests/native verification pending, together with N7.3 alpha/collapsing changes. No parity score change. See nurbs-color.md.
+
+### 2026-10-26 N7.5 source update
+
+Separate `nurbsCreate` (create) and `nurbs` (edit) tools, Enter/Escape handoff, stronger RGB control bands with contrast halos, and a page-background swatch before the status-bar Zoom control. N7.3/N7.4 check/59-tests/build and 12 native UI checks passed in `isolated-build_20261026_0331_fd065d82`; restoration completed, no blocked events recorded. N7.5 formatting and script syntax/plan pass; its build/native verification remains pending. No parity-score change. See `docs/nurbs-ui.md`.

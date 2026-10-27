@@ -21,7 +21,7 @@ use std::sync::{Arc, Weak};
 use vectorcraft_doc::live::{GradientMesh, MeshQuad};
 use vectorcraft_doc::placed_document::ReadDocument;
 use vectorcraft_doc::{Document, Node, NodeKind};
-use vectorcraft_geom::{Affine, BezPath, Point, Vec2};
+use vectorcraft_geom::{Affine, BezPath, Point, Shape, Vec2};
 use vello_cpu::RenderContext;
 use vello_cpu::peniko;
 
@@ -197,6 +197,11 @@ fn hash_resources<'a>(doc: &'a Document, n: &'a Node, shown: &mut Shown, h: &mut
                     shown.text = true;
                     shown.placed = true;
                 }
+                NodeKind::Image(im) => {
+                    if let Some(blob) = doc.image_blob(im) {
+                        Arc::as_ptr(&blob.bytes).hash(h);
+                    }
+                }
                 NodeKind::Text(_) => shown.text = true,
                 _ => {}
             }
@@ -238,9 +243,24 @@ const MESH_RASTER_MAX_PIXELS: usize = 4 << 20;
 /// path's setup per quad: a page of thousands of meshes made millions of them at print size (minutes), where this
 /// costs about one write per covered pixel. → false (nothing drawn) when the box is too large for
 /// one buffer, so the caller draws the quads.
-fn draw_mesh_raster(ctx: &mut RenderContext, f: &Frame, m: &GradientMesh, quads: &[MeshQuad], alpha: f32) -> bool {
+fn draw_mesh_raster(ctx: &mut RenderContext, f: &Frame, m: &GradientMesh, quads: &[MeshQuad], alpha: f32, threads: u16) -> bool {
     let outline = m.outline().to_bezpath();
-    let dev = f.view.transform_rect_bbox(vectorcraft_geom::Shape::bounding_box(&outline));
+    draw_colored_quads(ctx, f, &outline, quads, QuadOptions { alpha, grow: 0.5, strip_pixels: false, threads })
+}
+#[derive(Clone, Copy)]
+pub(crate) struct QuadOptions {
+    pub alpha: f32,
+    pub grow: f64,
+    pub strip_pixels: bool,
+    pub threads: u16,
+}
+struct ShadedQuad {
+    points: [Point; 4],
+    colors: [[f32; 4]; 4],
+}
+pub(crate) fn draw_colored_quads(ctx: &mut RenderContext, f: &Frame, outline: &BezPath, quads: &[MeshQuad], options: QuadOptions) -> bool {
+    let strip_pixels = options.strip_pixels;
+    let dev = f.view.transform_rect_bbox(vectorcraft_geom::Shape::bounding_box(outline));
     if ![dev.x0, dev.y0, dev.x1, dev.y1].iter().all(|v| v.is_finite()) {
         return false;
     }
@@ -252,30 +272,108 @@ fn draw_mesh_raster(ctx: &mut RenderContext, f: &Frame, m: &GradientMesh, quads:
         return true;
     }
     let (w, h) = ((x1 - x0) as usize, (y1 - y0) as usize);
+    if strip_pixels && w * h > (1 << 20) {
+        // Bounded strip raster tiles, with a two-pixel halo for edge sampling at seams.
+        for y in (y0 as usize..y1 as usize).step_by(512) {
+            for x in (x0 as usize..x1 as usize).step_by(512) {
+                let right = (x as f64 + 512.0).min(x1);
+                let bottom = (y as f64 + 512.0).min(y1);
+                ctx.set_transform(Affine::IDENTITY);
+                ctx.push_clip_layer(&vectorcraft_geom::Rect::new(x as f64, y as f64, right, bottom).to_path(0.1));
+                quad_region(
+                    ctx,
+                    f,
+                    outline,
+                    quads,
+                    options,
+                    [(x as f64 - 2.0).max(0.0), (y as f64 - 2.0).max(0.0), (right + 2.0).min(cw), (bottom + 2.0).min(ch)],
+                );
+                ctx.pop_layer();
+            }
+        }
+        return true;
+    }
     if w * h > MESH_RASTER_MAX_PIXELS || w > usize::from(u16::MAX) || h > usize::from(u16::MAX) {
         return false;
     }
+    quad_region(ctx, f, outline, quads, options, [x0, y0, x1, y1]);
+    true
+}
+fn quad_region(ctx: &mut RenderContext, f: &Frame, outline: &BezPath, quads: &[MeshQuad], options: QuadOptions, bounds: [f64; 4]) {
+    let [x0, y0, x1, y1] = bounds;
+    let (w, h) = ((x1 - x0) as usize, (y1 - y0) as usize);
     let clear = vello_cpu::color::PremulRgba8 { r: 0, g: 0, b: 0, a: 0 };
     let mut px = vec![clear; w * h];
     let mut filled = vec![false; w * h];
     let to_buffer = Affine::translate((-x0, -y0)) * f.view;
-    for q in quads {
-        // A fully transparent corner still shades toward clear, so the edge fill below leaves it clear.
-        let corners = q.corners.map(|(color, opacity)| {
-            let c = if opacity > 0.0 { f.ink.color(&color, opacity * alpha).premultiply().to_rgba8() } else { clear };
-            [c.r, c.g, c.b, c.a].map(f32::from)
-        });
-        fill_quad(&mut px, &mut filled, w, h, q.pts.map(|p| to_buffer * p), corners);
-    }
+    let QuadOptions { alpha, grow, strip_pixels, threads } = options;
+    // Convert paints on the calling thread; workers see only immutable numeric samples.
+    let prepared: Vec<_> = quads
+        .iter()
+        .map(|q| {
+            let colors = q.corners.map(|(color, opacity)| {
+                let c = if opacity > 0.0 {
+                    f.ink.color(&color, opacity * if strip_pixels { 1.0 } else { alpha }).premultiply().to_rgba8()
+                } else {
+                    clear
+                };
+                [c.r, c.g, c.b, c.a].map(f32::from)
+            });
+            ShadedQuad { points: q.pts.map(|p| to_buffer * p), colors }
+        })
+        .collect();
+    let work = prepared
+        .iter()
+        .map(|q| {
+            let [a, b, c, d] = q.points;
+            let area = ((b - a).cross(c - a).abs() + (c - a).cross(d - a).abs()) * 0.5;
+            let minx = a.x.min(b.x).min(c.x).min(d.x).clamp(0.0, w as f64);
+            let maxx = a.x.max(b.x).max(c.x).max(d.x).clamp(0.0, w as f64);
+            let miny = a.y.min(b.y).min(c.y).min(d.y).clamp(0.0, h as f64);
+            let maxy = a.y.max(b.y).max(c.y).max(d.y).clamp(0.0, h as f64);
+            area.min((maxx - minx) * (maxy - miny))
+        })
+        .sum::<f64>()
+        .ceil() as usize;
+    let rasterize = |row: usize, px: &mut [vello_cpu::color::PremulRgba8], filled: &mut [bool]| {
+        let offset = row * w;
+        let rows = row..row + px.len() / w;
+        // Every band retains curve order, including overlapping translucent sections.
+        for q in &prepared {
+            let mut draw = |i: usize, c| {
+                let i = i - offset;
+                if strip_pixels {
+                    px[i] = source_over(c, px[i]);
+                } else {
+                    px[i] = c;
+                }
+                filled[i] = true;
+            };
+            if strip_pixels {
+                for idx in [[0, 1, 2, 0], [0, 2, 3, 0]] {
+                    visit_quad_rows(w, h, idx.map(|i| q.points[i]), idx.map(|i| q.colors[i]), rows.clone(), &mut draw);
+                }
+            } else {
+                visit_quad_rows(w, h, q.points, q.colors, rows.clone(), &mut draw);
+            }
+        }
+        if strip_pixels && alpha < 1.0 {
+            for c in px {
+                let scale = |v: u8| (f32::from(v) * alpha.clamp(0.0, 1.0)).round() as u8;
+                *c = vello_cpu::color::PremulRgba8 { r: scale(c.r), g: scale(c.g), b: scale(c.b), a: scale(c.a) };
+            }
+        }
+    };
+    let workers = vectorcraft_doc::raster_parallel::workers(work, threads).min(h).max(1);
+    vectorcraft_doc::raster_parallel::for_each_band_pair(&mut px, &mut filled, w, workers, rasterize);
     // Twice: the grown edge samples pixels up to about a pixel and a half out from the quads.
     let filled = spread_to_edges(&mut px, filled, w, h);
     spread_to_edges(&mut px, filled, w, h);
     let pm = Arc::new(vello_cpu::Pixmap::from_parts(px, w as u16, h as u16));
     ctx.set_transform(Affine::translate((x0, y0)));
     ctx.set_paint(vello_cpu::Image { image: vello_cpu::ImageSource::Pixmap(pm), sampler: peniko::ImageSampler::default() });
-    ctx.fill_path(&grown_outline(&(Affine::translate((-x0, -y0)) * f.view * outline), 0.5));
+    ctx.fill_path(&grown_outline(&(Affine::translate((-x0, -y0)) * f.view * outline.clone()), grow));
     ctx.set_transform(Affine::IDENTITY);
-    true
 }
 
 /// `path` (device pixels) flattened and each closed subpath moved out by `grow` along its edges'
@@ -283,6 +381,9 @@ fn draw_mesh_raster(ctx: &mut RenderContext, f: &Frame, m: &GradientMesh, quads:
 /// around it once: filling the outline and stroking it as well would paint a translucent mesh's
 /// edge twice, a darker line.
 fn grown_outline(path: &BezPath, grow: f64) -> BezPath {
+    if grow == 0.0 {
+        return path.clone();
+    }
     let mut rings: Vec<Vec<Point>> = Vec::new();
     vectorcraft_geom::kurbo::flatten(path, 0.1, |el| match el {
         vectorcraft_geom::PathEl::MoveTo(p) => rings.push(vec![p]),
@@ -333,15 +434,43 @@ fn grown_outline(path: &BezPath, grow: f64) -> BezPath {
     out
 }
 
+/// Porter-Duff source-over on premultiplied RGBA. Later quads (larger u) are on top.
+fn source_over(src: vello_cpu::color::PremulRgba8, dst: vello_cpu::color::PremulRgba8) -> vello_cpu::color::PremulRgba8 {
+    let inverse = 255 - u32::from(src.a);
+    let channel = |s: u8, d: u8| (u32::from(s) + (u32::from(d) * inverse + 127) / 255).min(255) as u8;
+    vello_cpu::color::PremulRgba8 { r: channel(src.r, dst.r), g: channel(src.g, dst.g), b: channel(src.b, dst.b), a: channel(src.a, dst.a) }
+}
 /// Fill the pixels of the `w`×`h` buffer whose centres are inside quad `p` (buffer pixels, even-odd
 /// so a twisted quad is filled as drawn) with `c`, and mark them `filled`.
+#[cfg(test)]
 fn fill_quad(px: &mut [vello_cpu::color::PremulRgba8], filled: &mut [bool], w: usize, h: usize, p: [Point; 4], c: [[f32; 4]; 4]) {
+    visit_quad(w, h, p, c, |i, color| {
+        if let Some(d) = px.get_mut(i) {
+            *d = color;
+        }
+        if let Some(k) = filled.get_mut(i) {
+            *k = true;
+        }
+    });
+}
+#[cfg(test)]
+fn visit_quad(w: usize, h: usize, p: [Point; 4], c: [[f32; 4]; 4], visit: impl FnMut(usize, vello_cpu::color::PremulRgba8)) {
+    visit_quad_rows(w, h, p, c, 0..h, visit);
+}
+fn visit_quad_rows(
+    w: usize,
+    h: usize,
+    p: [Point; 4],
+    c: [[f32; 4]; 4],
+    rows: std::ops::Range<usize>,
+    mut visit: impl FnMut(usize, vello_cpu::color::PremulRgba8),
+) {
     if !p.iter().all(|p| p.x.is_finite() && p.y.is_finite()) {
         return;
     }
     let (min_y, max_y) = p.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), q| (a.min(q.y), b.max(q.y)));
-    let first = (min_y - 0.5).ceil().max(0.0) as usize;
-    let last = ((max_y - 0.5).ceil().max(0.0) as usize).min(h);
+    let first = ((min_y - 0.5).ceil().max(0.0) as usize).max(rows.start);
+    let last = ((max_y - 0.5).ceil().max(0.0) as usize).min(h).min(rows.end);
     for y in first..last {
         let yc = y as f64 + 0.5;
         let mut xs = [0.0f64; 4];
@@ -359,12 +488,8 @@ fn fill_quad(px: &mut [vello_cpu::color::PremulRgba8], filled: &mut [bool], w: u
             let from = (a - 0.5).ceil().clamp(0.0, w as f64) as usize;
             let to = (b - 0.5).ceil().clamp(0.0, w as f64) as usize;
             let row = y * w;
-            for ((x, d), k) in (from..)
-                .zip(px.get_mut(row + from..row + to).unwrap_or_default().iter_mut())
-                .zip(filled.get_mut(row + from..row + to).unwrap_or_default())
-            {
-                *d = shade(p, &c, Point::new(x as f64 + 0.5, yc));
-                *k = true;
+            for x in from..to {
+                visit(row + x, shade(p, &c, Point::new(x as f64 + 0.5, yc)));
             }
         }
     }
@@ -443,7 +568,7 @@ impl Renderer {
         let at = Arc::as_ptr(n) as usize;
         if let Some((node, walked, read)) = self.live.walks.get(&at, self.stamp)
             && std::ptr::eq(node.as_ptr(), Arc::as_ptr(n))
-            && read.same_art(&inputs)
+            && read.same_live_art(&inputs)
         {
             return (walked.key(inputs.cms), inputs, vec![]);
         }
@@ -577,7 +702,7 @@ impl Renderer {
         let quads = self.mesh_quads(f.doc, a, m, level, cache);
         ctx.set_fill_rule(peniko::Fill::NonZero);
         let alpha = self.alpha;
-        if draw_mesh_raster(ctx, f, m, &quads, alpha) {
+        if draw_mesh_raster(ctx, f, m, &quads, alpha, self.threads) {
             ctx.set_transform(f.view);
             return;
         }
@@ -821,5 +946,19 @@ mod tests {
         let before = resources_key(&d, 0, &envelope).0;
         d.symbols[2].art = y.clone();
         assert_ne!(resources_key(&d, 0, &envelope).0, before, "the art of every instance is hashed");
+    }
+}
+
+#[cfg(test)]
+mod nurbs_overlap_tests {
+    use super::*;
+    #[test]
+    fn nurbs_quad_triangles_share_pixels_without_double_coverage() {
+        let p = [Point::new(0.0, 0.0), Point::new(16.0, 0.0), Point::new(16.0, 16.0), Point::new(0.0, 16.0)];
+        let mut hits = vec![0; 256];
+        for idx in [[0, 1, 2, 0], [0, 2, 3, 0]] {
+            visit_quad(16, 16, idx.map(|i| p[i]), [[255.0; 4]; 4], |i, _| hits[i] += 1);
+        }
+        assert!(hits.iter().all(|n| *n == 1));
     }
 }

@@ -932,3 +932,45 @@ hidden tab (whose frames the browser pauses) answers when it is shown again.
 | 2026-10-13 | minor | Documented count, pending-event and per-frame request budgets (#1709). |
 | 2026-10-13 | minor | Documented transport deadlines and connection-slot recovery (#1726). |
 | 2026-10-18 | minor | Documented `window.vectorcraft`, the web build's control channel. |
+
+## Custom NURBS extension (feature/nurbs)
+
+The shared `engine.execute` channel also exposes editable NURBS and pasted NURBS.
+`nurbs.paste` converts a group's direct NURBS children into one editable composite,
+ignoring other object kinds. `nurbs.get` returns the complete source model;
+`nurbs.create {curve}` and `nurbs.update {id,curve}` create or overwrite it.
+`nurbs.paste.update` and `nurbs.paste.remove` address direct pasted children by name.
+See [Pasted NURBS API](nurbs-pasted-api.md) for parameters, examples, ordering and limits.
+No new panel or pointer mode is included in stage one.
+
+Colored NURBS draft: create/update accept color_stroke and per-control RGBA; get returns both. Check, selected tests, desktop build and native create/render passed (2026-10-26). Native UI draft/Apply, HSV, width graph, Undo/Redo and save/close/reopen also passed in the isolated UI run. See [draft API and verification status](nurbs-color.md).
+
+N7.1 follow-up, 2026-10-26 (source, verification pending): panel live edits use existing nurbs.update preview transactions; colored strokes now read standard stroke.set cap/join/miterLimit. Self-overlap RGB uses alpha-weighted RMS with maximum alpha; no new command fields are required.
+
+N7.1 verification update, 2026-10-26 01:17: isolated check, 54 selected tests, desktop build and 12 native UI checks passed. Live HSV/width, Undo/Redo and native save/reopen verified. Caps/joins and RMS/tile regressions pass; no parity score change. See nurbs-color.md for session evidence and remaining limitations.
+
+N7.2 source update, 2026-10-26 02:17: stable periodic control/color order and serialized internal seam, locked corner weights, NURBS Stroke and page settings with existing artboard paper color, and removal of RMS overlap mixing. New compile/tests/native verification pending; prior N7.1 results do not cover these changes. No parity score change. See nurbs-color.md.
+
+N7.2 verification update, 2026-10-26 02:57: isolated check, 56 selected tests and desktop build passed. Native HSV passed; width check raced queued input. Screenshot confirms partial live width update. Script-only frame-wait fix prepared; native remainder pending. See nurbs-color.md. No parity score change.
+
+N7.3 source update, 2026-10-26 03:18: larger-parameter stroke sections composite above earlier sections with source-over alpha; object alpha applies once; periodic seam join is not doubled. Width/offset/opacity blocks now collapse independently. New checks/build/native verification pending; no parity score change. See nurbs-color.md.
+
+N7.4 source update, 2026-10-26 03:29: numbered vertex-color grid, control-color marker outlines, Alt-double-click nurbsVertexColor dialog for base/selected pasted controls, live RGBA preview and commit/cancel through nurbs.update. Compile/tests/native verification pending, together with N7.3 alpha/collapsing changes. No parity score change. See nurbs-color.md.
+
+### 2026-10-26 N7.5 source update
+
+Separate `nurbsCreate` (create) and `nurbs` (edit) tools, Enter/Escape handoff, stronger RGB control bands with contrast halos, and a page-background swatch before the status-bar Zoom control. N7.3/N7.4 check/59-tests/build and 12 native UI checks passed in `isolated-build_20261026_0331_fd065d82`; restoration completed, no blocked events recorded. N7.5 formatting and script syntax/plan pass; its build/native verification remains pending. No parity-score change. See `docs/nurbs-ui.md`.
+NURBS debris (2026-10-26): `nurbs.debris.create/get/update` bind source objects to
+NURBS frames with live references. `nurbs.debris.phase.add/move/remove/fix` manage
+matching-topology phases; `nurbs.debris.source` reveals/selects an input for
+editing. Update accepts parameter, scale, offset, blend and parameter/length
+ranges. Broken links produce empty derived art with a Layers warning. Native
+files retain the bindings. See [NURBS debris](nurbs-debris.md) for the full contract,
+including image corners, phase interpolation and raster sampling limits.
+
+NURBS Region's default alpha spline is `[[0,1],[1,0]]`; the panel's Default
+button restores it and Linear selects the increasing ramp `[[0,0],[1,1]]`.
+
+Debris create/update accept display: normal, mute, or outline. Read returns the
+display mode. This preserves logical geometry for other debris references; modes
+are undoable and saved. See [NURBS performance](nurbs-performance.md).

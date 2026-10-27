@@ -1613,6 +1613,10 @@ fn affine_between(s: [Point; 3], d: [Point; 3]) -> Option<Affine> {
 /// that takes the triangle where the warp takes its corners. Each piece reaches a little past its
 /// edges (at most half a point) so neighbours overlap and no seams show.
 fn warp_image(n: &Node, im: &ImageObject, w: &Warper) -> Node {
+    let blob = im.pixels.as_deref().or_else(|| w.hooks.symbols.and_then(|doc| doc.image_blob(im)));
+    if let Some(image) = crate::raster_warp::image(n, im, blob, w.f, w.cells) {
+        return image;
+    }
     let k = w.cells.max(1);
     // Two triangles a cell, three objects each; an image an inner envelope already cut into
     // pieces is cut again here, so the pieces count against [`MAX_GENERATED`]. Past it, the image

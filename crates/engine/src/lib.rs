@@ -2002,6 +2002,8 @@ impl Session {
             }
             cmd::objects_on_path::refresh(&before, doc);
             cmd::dimension::refresh(&before, doc)?;
+            vectorcraft_doc::nurbs_region::refresh(&before, doc).map_err(EngineError::Other)?;
+            vectorcraft_doc::nurbs_debris::refresh(&before, doc);
             Ok(v)
         }) {
             Ok(v) => match cmd::shaper::refresh(&before, Arc::make_mut(&mut st.doc)) {

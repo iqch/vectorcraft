@@ -2744,6 +2744,7 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
             "Object",
             vec![
                 sub("Transform", transform_items()),
+                sub("NURBS", vec![c("Create NURBS Region", "nurbs.region.create"), c("Attach NURBS Debris", "nurbs.debris.create")]),
                 sub("Arrange", arrange_items()),
                 sub(
                     "Align",
@@ -3217,6 +3218,7 @@ pub fn menu_tree_named(english_names: bool) -> Vec<(&'static str, Vec<Item>)> {
                 panel("Asset Export", crate::panels::asset_export::ID),
                 panel("Attributes", "attributes"),
                 panel("Blend", crate::panels::blend::ID),
+                panel("NURBS", crate::panels::nurbs::ID),
                 panel("Brushes", "brushes"),
                 panel("Color", "color"),
                 panel("Color Guide", "colorGuide"),

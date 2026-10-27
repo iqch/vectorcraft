@@ -77,6 +77,14 @@ impl LayerColor {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "shape", rename_all = "lowercase")]
 pub enum LiveShape {
+    /// Original NURBS geometry with its display outline and object transform.
+    Nurbs {
+        curve: vectorcraft_geom::nurbs::NurbsPath,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color_stroke: Option<Box<crate::nurbs_color::ColorStroke>>,
+        preview: PathData,
+        xf: Affine,
+    },
     Rectangle {
         /// Untransformed width/height. Transforms fold their scale into these (see
         /// [`LiveShape::transform`]), so they are document lengths unless `xf` shears.
@@ -149,7 +157,7 @@ impl LiveShape {
             LiveShape::Rectangle { radii_relative, .. } | LiveShape::Polygon { radii_relative, .. } | LiveShape::Path { radii_relative, .. } => {
                 *radii_relative
             }
-            LiveShape::Ellipse { .. } | LiveShape::Line { .. } => false,
+            LiveShape::Nurbs { .. } | LiveShape::Ellipse { .. } | LiveShape::Line { .. } => false,
         }
     }
     pub fn label(&self) -> &'static str {
@@ -159,6 +167,8 @@ impl LiveShape {
             LiveShape::Ellipse { .. } => "Ellipse",
             LiveShape::Polygon { .. } => "Polygon",
             LiveShape::Line { .. } => "Line",
+            LiveShape::Nurbs { color_stroke: Some(_), .. } => "Colored NURBS",
+            LiveShape::Nurbs { .. } => "NURBS",
             LiveShape::Path { .. } => "Path",
         }
     }
@@ -178,6 +188,7 @@ impl LiveShape {
                 cut_corners(&outline, &radii, kinds).0
             }
             LiveShape::Line { a, b } => shapes::line(*a, *b),
+            LiveShape::Nurbs { preview, xf, .. } => preview.transformed(*xf),
             LiveShape::Path { base, radii, kinds, radii_relative } => {
                 let radii = crate::corners::resolve_stored_radii(base, radii, *radii_relative);
                 cut_corners(base, &radii, kinds).0
@@ -278,7 +289,7 @@ impl LiveShape {
                 *xf = a * *xf;
                 !moves_only(a) && self.fold_scale()
             }
-            LiveShape::Ellipse { xf, .. } => {
+            LiveShape::Nurbs { xf, .. } | LiveShape::Ellipse { xf, .. } => {
                 *xf = a * *xf;
                 false
             }
@@ -335,7 +346,7 @@ impl LiveShape {
         let radii: &mut [f64] = match self {
             LiveShape::Rectangle { radii, .. } => radii,
             LiveShape::Polygon { radii, .. } | LiveShape::Path { radii, .. } => radii,
-            LiveShape::Ellipse { .. } | LiveShape::Line { .. } => return false,
+            LiveShape::Nurbs { .. } | LiveShape::Ellipse { .. } | LiveShape::Line { .. } => return false,
         };
         if relative || !radii.iter().any(|r| *r > 0.0) || k <= 1e-12 {
             return false;
@@ -346,7 +357,7 @@ impl LiveShape {
     /// Rotation angle of the live shape in degrees, clockwise on the page (y points down).
     pub fn angle_deg(&self) -> f64 {
         match self {
-            LiveShape::Rectangle { xf, .. } | LiveShape::Ellipse { xf, .. } | LiveShape::Polygon { xf, .. } => {
+            LiveShape::Nurbs { xf, .. } | LiveShape::Rectangle { xf, .. } | LiveShape::Ellipse { xf, .. } | LiveShape::Polygon { xf, .. } => {
                 let c = xf.as_coeffs();
                 c[1].atan2(c[0]).to_degrees()
             }
@@ -620,6 +631,10 @@ pub struct NodeExtras {
     /// Object › Objects on Path: the group's path and the objects attached to it (see
     /// [`crate::objects_on_path`]).
     pub objects_on_path: Option<Box<crate::objects_on_path::ObjectsOnPath>>,
+    /// Linked periodic NURBS distance fill; path and mask are derived caches.
+    pub nurbs_region: Option<Box<crate::nurbs_region::Region>>,
+    /// Point-based art bound to a NURBS curve through source-linked phases.
+    pub nurbs_debris: Option<Box<crate::nurbs_debris::Debris>>,
 }
 
 /// No extras: what [`Node::extras`] gives for a node without any.
@@ -639,6 +654,8 @@ static NO_EXTRAS: NodeExtras = NodeExtras {
     intertwine: None,
     live_paint_gaps: None,
     objects_on_path: None,
+    nurbs_region: None,
+    nurbs_debris: None,
 };
 
 /// A node's [`NodeExtras`], if it has any ([`Node::extras`]). Extras that are all unset equal
@@ -774,6 +791,8 @@ impl Serialize for Node {
             e.intertwine.is_none(),
             e.live_paint_gaps.is_none(),
             e.objects_on_path.is_none(),
+            e.nurbs_region.is_none(),
+            e.nurbs_debris.is_none(),
         ];
         let mut st = s.serialize_struct("Node", skips.iter().filter(|s| !**s).count())?;
         let mut skip = skips.into_iter();
@@ -813,6 +832,8 @@ impl Serialize for Node {
         field!("intertwine", &e.intertwine);
         field!("live_paint_gaps", &e.live_paint_gaps);
         field!("objects_on_path", &e.objects_on_path);
+        field!("nurbs_region", &e.nurbs_region);
+        field!("nurbs_debris", &e.nurbs_debris);
         st.end()
     }
 }
@@ -874,6 +895,10 @@ struct NodeWire {
     live_paint_gaps: Option<Box<crate::live_paint::GapOptions>>,
     #[serde(default)]
     objects_on_path: Option<Box<crate::objects_on_path::ObjectsOnPath>>,
+    #[serde(default)]
+    nurbs_region: Option<Box<crate::nurbs_region::Region>>,
+    #[serde(default)]
+    nurbs_debris: Option<Box<crate::nurbs_debris::Debris>>,
 }
 
 impl From<NodeWire> for Node {
@@ -894,6 +919,8 @@ impl From<NodeWire> for Node {
             intertwine: w.intertwine,
             live_paint_gaps: w.live_paint_gaps,
             objects_on_path: w.objects_on_path,
+            nurbs_region: w.nurbs_region.filter(|_| matches!(&w.kind, NodeKind::Path { live: None, .. })),
+            nurbs_debris: w.nurbs_debris.filter(|_| matches!(&w.kind, NodeKind::Group { clip: false, .. })),
         };
         Node {
             id: w.id,
@@ -1076,6 +1103,12 @@ impl Node {
     }
     /// Kind name as the Layers panel / Properties panel shows it.
     pub fn kind_label(&self) -> &'static str {
+        if self.extras().nurbs_debris.is_some() {
+            return "NURBS Debris";
+        }
+        if self.extras().nurbs_region.is_some() {
+            return "NURBS Region";
+        }
         match &self.kind {
             NodeKind::Layer { .. } => "Layer",
             NodeKind::Group { clip: true, .. } => "Clip Group",
@@ -1129,6 +1162,17 @@ impl Node {
         }
     }
     /// The path a path's or compound path's own strokes follow (a compound's members' together).
+    fn nurbs_color_outset(&self) -> f64 {
+        let NodeKind::Path { live: Some(live), .. } = &self.kind else { return 0.0 };
+        let LiveShape::Nurbs { color_stroke: Some(style), .. } = &**live else { return 0.0 };
+        let width = self
+            .appearance
+            .items
+            .iter()
+            .filter_map(|i| if let crate::AppearanceItem::Stroke(s) = i { Some(s.width.abs() * s.miter_limit.max(1.0)) } else { None })
+            .fold(0.0, f64::max);
+        style.outset(width)
+    }
     pub fn stroke_path(&self) -> Option<vectorcraft_geom::BezPath> {
         match &self.kind {
             NodeKind::Path { path, .. } => Some(path.to_bezpath()),
@@ -1160,7 +1204,7 @@ impl Node {
     pub(crate) fn reach(&self, symbols: Option<&SymbolBoxes>) -> Option<Rect> {
         match &self.kind {
             NodeKind::Path { .. } | NodeKind::Compound { .. } => {
-                let o = self.appearance.outset();
+                let o = self.appearance.outset() + self.nurbs_color_outset();
                 self.geometric(symbols).map(|b| b.inflate(o, o))
             }
             // The members' reach, grown by the container's own strokes.
@@ -1287,7 +1331,11 @@ impl Node {
             }
             NodeKind::Path { .. } | NodeKind::Compound { .. } => {
                 let b = self.geometric(symbols)?;
-                Some(self.appearance.stroked_bounds(b, || self.stroke_path().unwrap_or_default()))
+                Some(
+                    self.appearance
+                        .stroked_bounds(b, || self.stroke_path().unwrap_or_default())
+                        .inflate(self.nurbs_color_outset(), self.nurbs_color_outset()),
+                )
             }
             NodeKind::SymbolInstance { symbol, xf } => {
                 let b = match symbols.and_then(|s| Some((s, s.art(symbol)?))) {
@@ -1313,7 +1361,7 @@ impl Node {
             // An image is measured by its frame, without its own fills and strokes.
             NodeKind::Image(_) => self.geometric(symbols),
             _ => {
-                let o = self.appearance.outset();
+                let o = self.appearance.outset() + self.nurbs_color_outset();
                 self.geometric(symbols).map(|b| b.inflate(o, o))
             }
         }
