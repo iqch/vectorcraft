@@ -54,7 +54,8 @@ pub(super) fn graph(ui: &mut Ui, label: &str, p: &mut Profile, low: f64, high: f
     for i in 0..count {
         let value = p.points[i];
         let pos = to_screen(value);
-        let hit = ui.interact(egui::Rect::from_center_size(pos, egui::vec2(15.0, 15.0)), ui.id().with((label, i)), egui::Sense::click_and_drag());
+        let hit =
+            ui.interact(egui::Rect::from_center_size(pos, egui::vec2(15.0, 15.0)), ui.scope_id().with((label, i)), egui::Sense::click_and_drag());
         if hit.clicked() || hit.drag_started() {
             *selected = i;
         }

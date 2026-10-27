@@ -65,6 +65,12 @@ binary, rather than comparing a debug build with a release build.
 
 ## Validation
 
+The production timings and 20 native desktop checks recorded here belong to the
+0.16 custom build before integration with upstream 0.17. The 0.17 integration was
+checked separately on Linux: full desktop type checking, 103 focused NURBS tests,
+38 shortcut tests, 17 node tests and six shared live-rasterizer tests passed.
+Its Windows Release executable must be built on Windows after importing the merge.
+
 The focused NURBS run passed all 71 tests (17 document, 28 engine, 16 renderer,
 10 UI). These include serial/parallel byte equality, cancellation, tile boundaries,
 cache reuse and invalidation, mode Undo/Redo, legacy deserialization, chained
